@@ -1,0 +1,27 @@
+viewbox 0 0 1024 1024
+fill #000000
+rectangle 0,0 1024,1024
+stroke #0084FF
+fill none
+stroke-width 36
+stroke-linecap round
+stroke-linejoin round
+path 'M 330,200 L 740,200 A 60,60 0 0,1 800,260 L 800,680 A 60,60 0 0,1 740,740 L 330,740'
+line 330,200 330,740
+line 220,240 220,720
+path 'M 220,720 A 50,50 0 0,0 270,770 L 270,800 A 50,50 0 0,1 220,850 L 800,850 A 20,20 0 0,0 820,830'
+stroke none
+fill #FFFFFF
+path 'M 260,770 L 800,770 L 800,824 L 260,824 A 27,27 0 0,1 235,797 A 27,27 0 0,1 260,770 Z'
+roundrectangle 155,314 285,358 22,22
+roundrectangle 155,466 285,510 22,22
+roundrectangle 155,618 285,662 22,22
+stroke none
+fill #0084FF
+roundrectangle 475,452 655,488 14,14
+roundrectangle 465,340 505,600 20,20
+roundrectangle 415,380 453,560 19,19
+roundrectangle 375,454 403,486 12,12
+roundrectangle 625,340 665,600 20,20
+roundrectangle 677,380 715,560 19,19
+roundrectangle 727,454 755,486 12,12

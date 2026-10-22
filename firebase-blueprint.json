@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "IronPulse Cloud Sync Blueprint",
+  "entities": {
+    "UserProfile": {
+      "collection": "users",
+      "path": "users/{userId}",
+      "fields": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "updatedAt": { "type": "integer" }
+      }
+    },
+    "CustomExercise": {
+      "collection": "custom_exercises",
+      "path": "users/{userId}/custom_exercises/{exerciseId}",
+      "fields": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "equipment": { "type": "string" },
+        "primaryMuscle": { "type": "string" },
+        "secondaryMuscles": { "type": "array" },
+        "equipmentCategory": { "type": "string" },
+        "trackingType": { "type": "string" },
+        "defaultRestSeconds": { "type": "integer" },
+        "instructions": { "type": "string" },
+        "isCustom": { "type": "boolean" },
+        "updatedAt": { "type": "integer" }
+      }
+    },
+    "Routine": {
+      "collection": "routines",
+      "path": "users/{userId}/routines/{routineId}",
+      "fields": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "exerciseIds": { "type": "array" },
+        "updatedAt": { "type": "integer" }
+      }
+    },
+    "WorkoutSession": {
+      "collection": "workouts",
+      "path": "users/{userId}/workouts/{sessionId}",
+      "fields": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "routineName": { "type": "string" },
+        "startTime": { "type": "integer" },
+        "endTime": { "type": "integer" },
+        "durationMinutes": { "type": "integer" },
+        "totalVolumeKg": { "type": "number" },
+        "totalSets": { "type": "integer" },
+        "notes": { "type": "string" },
+        "isCompleted": { "type": "boolean" },
+        "updatedAt": { "type": "integer" }
+      }
+    },
+    "LoggedSet": {
+      "collection": "sets",
+      "path": "users/{userId}/workouts/{sessionId}/sets/{setId}",
+      "fields": {
+        "id": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "exerciseId": { "type": "string" },
+        "exerciseName": { "type": "string" },
+        "setNumber": { "type": "integer" },
+        "setType": { "type": "string" },
+        "weightKg": { "type": "number" },
+        "reps": { "type": "integer" },
+        "rpe": { "type": "number" },
+        "isCompleted": { "type": "boolean" },
+        "completedAt": { "type": "integer" },
+        "updatedAt": { "type": "integer" }
+      }
+    },
+    "BodyMeasurement": {
+      "collection": "measurements",
+      "path": "users/{userId}/measurements/{measurementId}",
+      "fields": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "timestamp": { "type": "integer" },
+        "dateString": { "type": "string" },
+        "weightKg": { "type": "number" },
+        "targetWeightKg": { "type": "number" },
+        "bodyFatPercentage": { "type": "number" },
+        "neckCm": { "type": "number" },
+        "shouldersCm": { "type": "number" },
+        "chestCm": { "type": "number" },
+        "leftArmCm": { "type": "number" },
+        "rightArmCm": { "type": "number" },
+        "forearmsCm": { "type": "number" },
+        "waistCm": { "type": "number" },
+        "hipsCm": { "type": "number" },
+        "leftThighCm": { "type": "number" },
+        "rightThighCm": { "type": "number" },
+        "calvesCm": { "type": "number" },
+        "notes": { "type": "string" },
+        "updatedAt": { "type": "integer" }
+      }
+    }
+  }
+}

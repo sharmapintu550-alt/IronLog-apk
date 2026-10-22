@@ -1,0 +1,8 @@
+{
+  "name": "IronLog",
+  "description": "Workout and gym tracker to log exercises, sets, reps, and routines",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,7 @@
+viewbox 0 0 512 512
+fill black
+rectangle 0,0 512,512
+stroke #0084FF
+stroke-width 20
+fill none
+roundrectangle 100,100 400,400 40,40
