@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -10,26 +11,35 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.clickable
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.entity.WorkoutLogEntity
+import com.example.ui.components.ExerciseProgressBottomSheet
 import com.example.ui.components.WorkoutShareSheet
 import com.example.ui.theme.*
+import com.example.ui.viewmodel.WorkoutViewModel
+import com.example.util.CompletedExerciseItem
 import com.example.util.WorkoutShareHelper
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WorkoutDetailScreen(
     log: WorkoutLogEntity,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onDelete: (() -> Unit)? = null,
+    viewModel: WorkoutViewModel = viewModel()
 ) {
     BackHandler { onBack() }
 
@@ -38,6 +48,58 @@ fun WorkoutDetailScreen(
     }
 
     var showShareSheet by remember { mutableStateOf(false) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var selectedExerciseForAnalytics by remember { mutableStateOf<CompletedExerciseItem?>(null) }
+
+    if (showDeleteConfirmDialog && onDelete != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            containerColor = Color(0xFF141414),
+            shape = RoundedCornerShape(16.dp),
+            tonalElevation = 6.dp,
+            title = {
+                Text(
+                    text = "Delete Workout Log?",
+                    color = TextWhite,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to delete this session for '${log.routineTitle}'? This will recalculate your total volume and sets, and remove the entry permanently.",
+                    color = TextMuted,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirmDialog = false
+                        onDelete()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFFF453A),
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.testTag("confirm_delete_detail_button")
+                ) {
+                    Text("Delete", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDeleteConfirmDialog = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF9CA3AF)),
+                    modifier = Modifier.testTag("cancel_delete_detail_button")
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     Scaffold(
         containerColor = AmoledBlack,
@@ -74,16 +136,31 @@ fun WorkoutDetailScreen(
                         fontWeight = FontWeight.Bold
                     )
 
-                    // Share Action Button in Top App Bar
-                    IconButton(
-                        onClick = { showShareSheet = true },
-                        modifier = Modifier.testTag("detail_share_button")
-                    ) {
-                        Icon(
-                            Icons.Default.Share,
-                            contentDescription = "Share",
-                            tint = ElectricBlue
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        // Share Action Button in Top App Bar
+                        IconButton(
+                            onClick = { showShareSheet = true },
+                            modifier = Modifier.testTag("detail_share_button")
+                        ) {
+                            Icon(
+                                Icons.Default.Share,
+                                contentDescription = "Share",
+                                tint = ElectricBlue
+                            )
+                        }
+
+                        if (onDelete != null) {
+                            IconButton(
+                                onClick = { showDeleteConfirmDialog = true },
+                                modifier = Modifier.testTag("detail_delete_button")
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "Delete",
+                                    tint = Color(0xFFFF453A)
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -233,13 +310,18 @@ fun WorkoutDetailScreen(
                             .padding(16.dp)
                     ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { selectedExerciseForAnalytics = exercise }
+                                .padding(vertical = 2.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                modifier = Modifier.weight(1f, fill = false)
                             ) {
                                 val isPeakEnergy = (exercise.orderPerformed in 1..3)
                                 Box(
@@ -273,7 +355,9 @@ fun WorkoutDetailScreen(
                                             text = exercise.name,
                                             color = TextWhite,
                                             fontSize = 16.sp,
-                                            fontWeight = FontWeight.Bold
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                         )
                                         if (exercise.orderPerformed == 1) {
                                             Surface(
@@ -285,7 +369,9 @@ fun WorkoutDetailScreen(
                                                     color = TextWhite,
                                                     fontSize = 9.sp,
                                                     fontWeight = FontWeight.ExtraBold,
-                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                                                 )
                                             }
                                         } else if (exercise.orderPerformed in 2..3) {
@@ -299,7 +385,9 @@ fun WorkoutDetailScreen(
                                                     color = ElectricBlueLight,
                                                     fontSize = 9.sp,
                                                     fontWeight = FontWeight.Bold,
-                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                    maxLines = 1,
+                                                    softWrap = false,
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                                                 )
                                             }
                                         }
@@ -307,17 +395,54 @@ fun WorkoutDetailScreen(
                                 }
                             }
 
-                            Surface(
-                                color = ElectricBlueAlpha,
-                                shape = RoundedCornerShape(6.dp)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Text(
-                                    text = exercise.muscleGroup,
-                                    color = ElectricBlueLight,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                )
+                                Surface(
+                                    color = ElectricBlueAlpha,
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(1.dp, ElectricBlue.copy(alpha = 0.4f)),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { selectedExerciseForAnalytics = exercise }
+                                        .testTag("exercise_analytics_button_${exercise.orderPerformed}")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                    ) {
+                                        Text(
+                                            text = "Analytics",
+                                            color = ElectricBlueLight,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            softWrap = false
+                                        )
+                                        Text(
+                                            text = "📈",
+                                            fontSize = 10.sp
+                                        )
+                                    }
+                                }
+
+                                Surface(
+                                    color = DarkCardSurface,
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(1.dp, DarkBorder)
+                                ) {
+                                    Text(
+                                        text = exercise.muscleGroup,
+                                        color = TextMuted,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                    )
+                                }
                             }
                         }
 
@@ -415,6 +540,15 @@ fun WorkoutDetailScreen(
             workout = workout,
             exercises = exercises,
             onDismiss = { showShareSheet = false }
+        )
+    }
+
+    selectedExerciseForAnalytics?.let { exerciseItem ->
+        ExerciseProgressBottomSheet(
+            exerciseName = exerciseItem.name,
+            muscleGroup = exerciseItem.muscleGroup,
+            viewModel = viewModel,
+            onDismiss = { selectedExerciseForAnalytics = null }
         )
     }
 }

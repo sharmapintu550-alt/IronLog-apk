@@ -31,6 +31,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.entity.RoutineEntity
+import com.example.data.entity.ExerciseEntity
+import com.example.util.QrCodeGenerator
+import com.example.util.SharedRoutinePayload
+import com.example.util.SharedRoutineExercise
+import com.example.util.SharedExerciseSet
 import com.example.ui.components.AddExerciseBottomSheet
 import com.example.ui.components.ExerciseThumbnail
 import com.example.ui.theme.*
@@ -57,19 +63,167 @@ data class RoutineTemplateExercise(
     )
 )
 
+/**
+ * Parses exercises from an existing RoutineEntity, preferring exercisesJson if available
+ * and falling back to exercisesSummary with default sets.
+ */
+fun parseRoutineExercises(
+    routine: RoutineEntity,
+    allDbExercises: List<ExerciseEntity>
+): List<RoutineTemplateExercise> {
+    val result = mutableListOf<RoutineTemplateExercise>()
+
+    // Try parsing from exercisesJson first
+    if (routine.exercisesJson.isNotBlank()) {
+        val payload = QrCodeGenerator.parseInput(routine.exercisesJson)
+        if (payload != null && payload.exercises.isNotEmpty()) {
+            payload.exercises.forEach { sharedEx ->
+                val matchedDb = allDbExercises.find { it.name.equals(sharedEx.name, ignoreCase = true) }
+                val muscle = matchedDb?.primaryMuscle ?: sharedEx.muscle.ifBlank { "Full Body" }
+                val equip = matchedDb?.equipmentType ?: sharedEx.equipment.ifBlank { "Barbell" }
+
+                val templateSets = if (sharedEx.sets.isNotEmpty()) {
+                    sharedEx.sets.map { s ->
+                        val wStr = if (s.weightKg % 1.0 == 0.0) s.weightKg.toInt().toString() else s.weightKg.toString()
+                        RoutineTemplateSet(
+                            id = UUID.randomUUID().toString(),
+                            weight = if (wStr == "0") "0" else wStr,
+                            reps = s.reps.toString()
+                        )
+                    }.toMutableList()
+                } else {
+                    val count = if (sharedEx.defaultSets > 0) sharedEx.defaultSets else 3
+                    val reps = sharedEx.targetReps.filter { it.isDigit() }.takeIf { it.isNotBlank() } ?: "10"
+                    (1..count).map {
+                        RoutineTemplateSet(id = UUID.randomUUID().toString(), weight = "0", reps = reps)
+                    }.toMutableList()
+                }
+
+                result.add(
+                    RoutineTemplateExercise(
+                        id = sharedEx.id.ifBlank { UUID.randomUUID().toString() },
+                        name = sharedEx.name,
+                        primaryMuscle = muscle,
+                        equipmentType = equip,
+                        sets = templateSets
+                    )
+                )
+            }
+        }
+    }
+
+    // Fallback: parse from exercisesSummary if exercisesJson is missing or produced no exercises
+    if (result.isEmpty() && routine.exercisesSummary.isNotBlank()) {
+        val items = routine.exercisesSummary.split(",").map { it.trim() }.filter { it.isNotBlank() }
+        val setRegex = Regex("""^(.*?)\s*\((\d+)\s*sets?\)$""", RegexOption.IGNORE_CASE)
+
+        items.forEach { item ->
+            val match = setRegex.find(item)
+            val name = match?.groupValues?.get(1)?.trim() ?: item
+            val setCount = match?.groupValues?.get(2)?.toIntOrNull() ?: 3
+
+            val matchedDb = allDbExercises.find { it.name.equals(name, ignoreCase = true) }
+            val muscle = matchedDb?.primaryMuscle ?: ""
+            val equip = matchedDb?.equipmentType ?: ""
+
+            val sets = (1..setCount).map {
+                RoutineTemplateSet(id = UUID.randomUUID().toString(), weight = "0", reps = "10")
+            }.toMutableList()
+
+            result.add(
+                RoutineTemplateExercise(
+                    id = UUID.randomUUID().toString(),
+                    name = name,
+                    primaryMuscle = muscle,
+                    equipmentType = equip,
+                    sets = sets
+                )
+            )
+        }
+    }
+
+    return result
+}
+
+/**
+ * Serializes exercises and sets into a JSON string compatible with QrCodeGenerator / SharedRoutinePayload.
+ */
+fun serializeExercisesToJson(
+    routineTitle: String,
+    routineNotes: String,
+    exercises: List<RoutineTemplateExercise>
+): String {
+    val sharedExercises = exercises.mapIndexed { index, ex ->
+        SharedRoutineExercise(
+            id = ex.id,
+            name = ex.name,
+            exerciseName = ex.name,
+            muscle = ex.primaryMuscle.ifBlank { "Full Body" },
+            targetMuscle = ex.primaryMuscle.ifBlank { "Full Body" },
+            equipment = ex.equipmentType.ifBlank { "Barbell" },
+            defaultSets = ex.sets.size,
+            targetReps = ex.sets.firstOrNull()?.reps ?: "10",
+            notes = "",
+            sets = ex.sets.mapIndexed { sIndex, s ->
+                SharedExerciseSet(
+                    setNumber = sIndex + 1,
+                    reps = s.reps.toIntOrNull() ?: 10,
+                    weightKg = s.weight.toDoubleOrNull() ?: 0.0,
+                    setType = "NORMAL"
+                )
+            }
+        )
+    }
+    val payload = SharedRoutinePayload(
+        version = 2,
+        routineName = routineTitle,
+        description = routineNotes,
+        exercisesSummary = exercises.joinToString(", ") { "${it.name} (${it.sets.size} sets)" },
+        defaultSets = exercises.firstOrNull()?.sets?.size ?: 3,
+        exerciseIds = exercises.map { it.id },
+        exercises = sharedExercises
+    )
+    return QrCodeGenerator.serializeToJson(payload)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateRoutineScreen(
     viewModel: WorkoutViewModel,
+    routineId: String? = null,
+    editingRoutine: RoutineEntity? = null,
     onDismiss: () -> Unit,
-    onRoutineCreated: () -> Unit
+    onRoutineCreated: () -> Unit = {},
+    onRoutineSaved: () -> Unit = onRoutineCreated
 ) {
     val context = LocalContext.current
     val allDbExercises by viewModel.exercises.collectAsStateWithLifecycle()
+    val allRoutines by viewModel.routines.collectAsStateWithLifecycle()
 
-    var routineTitle by remember { mutableStateOf("") }
-    var routineNotes by remember { mutableStateOf("") }
-    val exercises = remember { mutableStateListOf<RoutineTemplateExercise>() }
+    val targetRoutine = editingRoutine ?: allRoutines.find { it.id == routineId }
+    val isEditing = targetRoutine != null
+
+    var routineTitle by remember(targetRoutine?.id) { mutableStateOf(targetRoutine?.title ?: "") }
+    var routineNotes by remember(targetRoutine?.id) { mutableStateOf(targetRoutine?.description ?: "") }
+    val exercises = remember(targetRoutine?.id) {
+        val initialList = mutableStateListOf<RoutineTemplateExercise>()
+        if (targetRoutine != null) {
+            initialList.addAll(parseRoutineExercises(targetRoutine, allDbExercises))
+        }
+        initialList
+    }
+
+    var hasLoadedRoutine by remember(targetRoutine?.id) { mutableStateOf(targetRoutine != null && exercises.isNotEmpty()) }
+
+    LaunchedEffect(targetRoutine?.id, allDbExercises.size) {
+        if (targetRoutine != null && !hasLoadedRoutine) {
+            routineTitle = targetRoutine.title
+            routineNotes = targetRoutine.description
+            exercises.clear()
+            exercises.addAll(parseRoutineExercises(targetRoutine, allDbExercises))
+            hasLoadedRoutine = true
+        }
+    }
 
     var showExercisePicker by remember { mutableStateOf(false) }
 
@@ -112,13 +266,13 @@ fun CreateRoutineScreen(
 
                     // Center Header
                     Text(
-                        text = "New Routine",
+                        text = if (isEditing) "Edit Routine" else "New Routine",
                         color = TextWhite,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
 
-                    // Prominent Save Button
+                    // Prominent Save / Save Changes Button
                     val canSave = routineTitle.isNotBlank()
                     Button(
                         onClick = {
@@ -130,15 +284,29 @@ fun CreateRoutineScreen(
                                         "${ex.name} (${ex.sets.size} sets)"
                                     }
                                 }
+                                val jsonStr = serializeExercisesToJson(routineTitle.trim(), routineNotes.trim(), exercises)
 
-                                viewModel.createRoutine(
-                                    title = routineTitle.trim(),
-                                    desc = routineNotes.trim(),
-                                    exercisesSummary = summaryStr
-                                )
-                                viewModel.syncWithCloud()
-                                Toast.makeText(context, "Routine created successfully", Toast.LENGTH_SHORT).show()
-                                onRoutineCreated()
+                                if (targetRoutine != null) {
+                                    viewModel.updateRoutine(
+                                        id = targetRoutine.id,
+                                        title = routineTitle.trim(),
+                                        desc = routineNotes.trim(),
+                                        exercisesSummary = summaryStr,
+                                        exercisesJson = jsonStr
+                                    )
+                                    Toast.makeText(context, "Routine updated successfully", Toast.LENGTH_SHORT).show()
+                                    onRoutineSaved()
+                                } else {
+                                    viewModel.createRoutine(
+                                        title = routineTitle.trim(),
+                                        desc = routineNotes.trim(),
+                                        exercisesSummary = summaryStr,
+                                        exercisesJson = jsonStr
+                                    )
+                                    viewModel.syncWithCloud()
+                                    Toast.makeText(context, "Routine created successfully", Toast.LENGTH_SHORT).show()
+                                    onRoutineCreated()
+                                }
                             }
                         },
                         enabled = canSave,
@@ -153,7 +321,7 @@ fun CreateRoutineScreen(
                         modifier = Modifier.testTag("save_routine_button")
                     ) {
                         Text(
-                            text = "Save",
+                            text = if (isEditing) "Save Changes" else "Save",
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp
                         )

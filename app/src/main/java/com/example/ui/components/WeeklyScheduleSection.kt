@@ -53,7 +53,21 @@ fun WeeklyScheduleSection(
     val splitForSelectedDay = weeklySplits.find { it.dayOfWeek == selectedDayOfWeek }
 
     val allocatedRoutine = remember(splitForSelectedDay, routines) {
-        splitForSelectedDay?.routineId?.let { id -> routines.find { it.id == id } }
+        if (splitForSelectedDay?.isRestDay == true || splitForSelectedDay?.routineId.isNullOrBlank()) {
+            null
+        } else {
+            val byId = routines.find { it.id == splitForSelectedDay?.routineId }
+            val byTitle = if (byId == null && !splitForSelectedDay?.routineTitle.isNullOrBlank()) {
+                routines.find { it.title.equals(splitForSelectedDay?.routineTitle, ignoreCase = true) }
+            } else null
+            byId ?: byTitle ?: RoutineEntity(
+                id = splitForSelectedDay!!.routineId!!,
+                userId = splitForSelectedDay.userId,
+                title = splitForSelectedDay.routineTitle ?: "Scheduled Workout",
+                description = "",
+                exercisesSummary = ""
+            )
+        }
     }
 
     val isSelectedDayRest = splitForSelectedDay?.isRestDay == true ||

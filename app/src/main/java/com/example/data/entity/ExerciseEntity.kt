@@ -27,7 +27,13 @@ data class ExerciseEntity(
     val equipmentCategory: String = equipment,
     val trackingType: String = "WEIGHT_AND_REPS",
     val defaultRestSeconds: Int = 90,
-    val instructions: String = ""
+    val instructions: String = "",
+    val barbellWeightKg: Double = 20.0,
+    val customBarWeight: Float? = null,
+    val userId: String? = null,
+    val isDualPulley: Boolean = false,
+    val setupMediaUri: String? = null,
+    val machineCalibration: String? = null
 ) {
     val uuid: UUID
         @Ignore get() = try {
@@ -35,6 +41,12 @@ data class ExerciseEntity(
         } catch (e: Exception) {
             UUID.nameUUIDFromBytes(id.toByteArray(Charsets.UTF_8))
         }
+
+    val lastNote: String
+        @Ignore get() = notes
+
+    val targetMuscle: String
+        @Ignore get() = primaryMuscle.ifBlank { muscleGroup }
 
     @Ignore
     constructor(
@@ -52,7 +64,13 @@ data class ExerciseEntity(
         instructions: String = "",
         isCustom: Boolean = false,
         prWeight: Double = 0.0,
-        prReps: Int = 0
+        prReps: Int = 0,
+        barbellWeightKg: Double = 20.0,
+        customBarWeight: Float? = null,
+        userId: String? = null,
+        isDualPulley: Boolean = false,
+        setupMediaUri: String? = null,
+        machineCalibration: String? = null
     ) : this(
         id = id.toString(),
         name = name,
@@ -70,6 +88,12 @@ data class ExerciseEntity(
         equipmentCategory = equipmentCategory,
         trackingType = trackingType,
         defaultRestSeconds = defaultRestSeconds,
-        instructions = instructions
+        instructions = instructions,
+        barbellWeightKg = customBarWeight?.toDouble() ?: barbellWeightKg,
+        customBarWeight = customBarWeight,
+        userId = userId,
+        isDualPulley = isDualPulley,
+        setupMediaUri = setupMediaUri,
+        machineCalibration = machineCalibration
     )
 }

@@ -65,8 +65,10 @@ fun ProfileAuthSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
                 .padding(horizontal = 24.dp)
-                .padding(bottom = 36.dp),
+                .padding(bottom = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
@@ -135,36 +137,40 @@ private fun GuestAuthView(
         )
     }
 
-    AnimatedVisibility(visible = errorMessage != null) {
-        if (errorMessage != null) {
+    AnimatedVisibility(visible = !errorMessage.isNullOrBlank()) {
+        if (!errorMessage.isNullOrBlank()) {
             Surface(
-                color = DarkCardBg,
+                color = FailureRed.copy(alpha = 0.15f),
                 shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, FailureRed.copy(alpha = 0.5f)),
-                modifier = Modifier.fillMaxWidth()
+                border = BorderStroke(1.dp, FailureRed.copy(alpha = 0.6f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("auth_error_chip")
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Warning,
-                        contentDescription = "Warning",
+                        contentDescription = "Sign-in error",
                         tint = FailureRed,
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                     Text(
                         text = errorMessage,
                         color = FailureRed,
-                        fontSize = 12.sp
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        fontWeight = FontWeight.Medium
                     )
                 }
             }
         }
     }
 
-    // Google Sign-In Button
+    // "Sign in with Google" Pill Button
     Button(
         onClick = onSignInWithGoogle,
         enabled = !isLoading,
@@ -172,7 +178,7 @@ private fun GuestAuthView(
             containerColor = Color.White,
             contentColor = Color.Black
         ),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(26.dp),
         modifier = Modifier
             .fillMaxWidth()
             .height(52.dp)
@@ -189,7 +195,6 @@ private fun GuestAuthView(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Branded Google 'G' Symbol
                 Text(
                     text = "G",
                     fontSize = 20.sp,
@@ -206,10 +211,10 @@ private fun GuestAuthView(
         }
     }
 
-    // Continue as Guest Button
+    // "Continue as Guest (Local Only)" Button
     OutlinedButton(
         onClick = onContinueAsGuest,
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(26.dp),
         border = BorderStroke(1.dp, DarkBorder),
         colors = ButtonDefaults.outlinedButtonColors(
             contentColor = TextMuted
@@ -394,14 +399,36 @@ private fun SignedInProfileView(
                 }
             }
 
-            if (syncStatus is SyncStatus.Success) {
-                val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
-                val formattedTime = timeFormat.format(Date(syncStatus.lastSyncTime))
+            val syncSubtitle = when (syncStatus) {
+                is SyncStatus.Success -> {
+                    val timeFormat = SimpleDateFormat("h:mm a", Locale.getDefault())
+                    val formattedTime = timeFormat.format(Date(syncStatus.lastSyncTime))
+                    "Synced just now at $formattedTime • All data saved"
+                }
+                is SyncStatus.Syncing -> "Syncing data with cloud..."
+                is SyncStatus.Error -> "Sync pending • Changes kept locally"
+                is SyncStatus.Idle -> "Synced just now • All data saved"
+            }
+            Row(
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                val dotColor = when (syncStatus) {
+                    is SyncStatus.Syncing -> ElectricBlueLight
+                    is SyncStatus.Error -> WarmupAmber
+                    else -> StreakGreen
+                }
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .background(dotColor, CircleShape)
+                )
                 Text(
-                    text = "Last synced today at $formattedTime",
+                    text = syncSubtitle,
                     color = TextMuted,
-                    fontSize = 11.sp,
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
                 )
             }
         }
@@ -416,7 +443,7 @@ private fun SignedInProfileView(
             containerColor = ElectricBlue,
             contentColor = Color.White
         ),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(26.dp),
         modifier = Modifier
             .fillMaxWidth()
             .height(50.dp)
@@ -445,18 +472,18 @@ private fun SignedInProfileView(
         }
     }
 
-    // "Sign Out" Button
+    // "Log Out" Button
     OutlinedButton(
         onClick = onSignOut,
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, DarkBorder),
+        shape = RoundedCornerShape(26.dp),
+        border = BorderStroke(1.dp, FailureRed.copy(alpha = 0.5f)),
         colors = ButtonDefaults.outlinedButtonColors(
-            contentColor = TextMuted
+            contentColor = FailureRed
         ),
         modifier = Modifier
             .fillMaxWidth()
             .height(48.dp)
-            .testTag("sign_out_button")
+            .testTag("log_out_button")
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -464,15 +491,15 @@ private fun SignedInProfileView(
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.ExitToApp,
-                contentDescription = "Sign Out",
-                tint = FailureRed.copy(alpha = 0.8f),
+                contentDescription = "Log Out",
+                tint = FailureRed.copy(alpha = 0.9f),
                 modifier = Modifier.size(18.dp)
             )
             Text(
-                text = "Sign Out",
-                color = FailureRed.copy(alpha = 0.85f),
+                text = "Log Out",
+                color = FailureRed.copy(alpha = 0.9f),
                 fontSize = 14.sp,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.SemiBold
             )
         }
     }

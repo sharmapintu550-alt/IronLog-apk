@@ -14,20 +14,24 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import android.content.Context
 import android.content.Intent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.WorkoutViewModel
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.saveable.rememberSaveable
 import com.example.data.entity.WorkoutLogEntity
 import com.example.util.WorkoutShareHelper
 import java.time.Instant
@@ -46,10 +50,63 @@ fun WorkoutHistoryScreen(
 
     val context = LocalContext.current
     var selectedDetailLog by remember { mutableStateOf<WorkoutLogEntity?>(null) }
+    var selectedSubTab by rememberSaveable { mutableStateOf(0) } // 0 = History Logs, 1 = Analytics & Progression
+    var logToDelete by remember { mutableStateOf<WorkoutLogEntity?>(null) }
 
     val totalWorkouts by remember { derivedStateOf { logs.size } }
     val totalVolumeKg by remember { derivedStateOf { logs.sumOf { it.totalVolumeKg } } }
     val totalSets by remember { derivedStateOf { logs.sumOf { it.totalSets } } }
+
+    if (logToDelete != null) {
+        val target = logToDelete!!
+        AlertDialog(
+            onDismissRequest = { logToDelete = null },
+            containerColor = Color(0xFF141414),
+            shape = RoundedCornerShape(16.dp),
+            tonalElevation = 6.dp,
+            title = {
+                Text(
+                    text = "Delete Workout Log?",
+                    color = TextWhite,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to delete this session for '${target.routineTitle}'? This will recalculate your total volume and sets, and remove the entry permanently.",
+                    color = TextMuted,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.deleteWorkoutLog(target)
+                        logToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFFF453A),
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.testTag("confirm_delete_log_button")
+                ) {
+                    Text("Delete", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { logToDelete = null },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF9CA3AF)),
+                    modifier = Modifier.testTag("cancel_delete_log_button")
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     AnimatedContent(
         targetState = selectedDetailLog,
@@ -79,17 +136,89 @@ fun WorkoutHistoryScreen(
         if (detailLog != null) {
             WorkoutDetailScreen(
                 log = detailLog,
-                onBack = { selectedDetailLog = null }
+                onBack = { selectedDetailLog = null },
+                onDelete = {
+                    viewModel.deleteWorkoutLog(detailLog)
+                    selectedDetailLog = null
+                }
             )
         } else {
-            LazyColumn(
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(AmoledBlack)
-                    .padding(horizontal = 16.dp),
-                contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                // Top Sub-Tab Switcher: Activity Logs vs Analytics & Progression
+                Surface(
+                    color = Color(0xFF141414),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, Color(0xFF262626)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(3.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (selectedSubTab == 0) ElectricBlue else Color.Transparent)
+                                .clickable { selectedSubTab = 0 }
+                                .padding(vertical = 7.dp)
+                                .testTag("tab_history_logs"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Activity Logs (${logs.size})",
+                                color = if (selectedSubTab == 0) Color.White else TextMuted,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (selectedSubTab == 1) ElectricBlue else Color.Transparent)
+                                .clickable { selectedSubTab = 1 }
+                                .padding(vertical = 7.dp)
+                                .testTag("tab_history_analytics"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text(
+                                    text = "Analytics & 1RM 📈",
+                                    color = if (selectedSubTab == 1) Color.White else TextMuted,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                if (selectedSubTab == 1) {
+                    AnalyticsDashboardScreen(
+                        viewModel = viewModel,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(AmoledBlack)
+                            .padding(horizontal = 16.dp),
+                        contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
         // Header
         item {
             Column {
@@ -124,7 +253,12 @@ fun WorkoutHistoryScreen(
                     Column(modifier = Modifier.padding(14.dp)) {
                         Text("WORKOUTS", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text("$totalWorkouts", color = TextWhite, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(
+                            text = if (totalWorkouts == 0) "0 Workouts" else "$totalWorkouts",
+                            color = TextWhite,
+                            fontSize = if (totalWorkouts == 0) 16.sp else 22.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
                     }
                 }
 
@@ -139,10 +273,15 @@ fun WorkoutHistoryScreen(
                     Column(modifier = Modifier.padding(14.dp)) {
                         Text("TOTAL VOL", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
+                        val volText = when {
+                            totalVolumeKg <= 0.0 -> "0 kg Vol"
+                            totalVolumeKg >= 1000.0 -> "${(totalVolumeKg / 1000).toInt()}k kg"
+                            else -> "${totalVolumeKg.toInt()} kg"
+                        }
                         Text(
-                            "${(totalVolumeKg / 1000).toInt()}k kg",
+                            text = volText,
                             color = ElectricBlue,
-                            fontSize = 22.sp,
+                            fontSize = if (totalVolumeKg <= 0.0) 16.sp else 22.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
                     }
@@ -159,7 +298,12 @@ fun WorkoutHistoryScreen(
                     Column(modifier = Modifier.padding(14.dp)) {
                         Text("TOTAL SETS", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.height(4.dp))
-                        Text("$totalSets", color = StreakGreen, fontSize = 22.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(
+                            text = if (totalSets == 0) "0 Sets" else "$totalSets",
+                            color = StreakGreen,
+                            fontSize = if (totalSets == 0) 16.sp else 22.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
                     }
                 }
             }
@@ -193,18 +337,47 @@ fun WorkoutHistoryScreen(
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp)),
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(1.dp, DarkBorder, RoundedCornerShape(16.dp))
+                        .testTag("empty_history_state"),
                     color = DarkCardBg
                 ) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(32.dp),
+                            .padding(vertical = 40.dp, horizontal = 24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(Icons.Default.History, contentDescription = null, tint = TextDark, modifier = Modifier.size(36.dp))
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("No workouts recorded yet", color = TextMuted, fontSize = 14.sp)
+                        Surface(
+                            modifier = Modifier.size(56.dp),
+                            shape = CircleShape,
+                            color = ElectricBlue.copy(alpha = 0.12f),
+                            border = BorderStroke(1.dp, ElectricBlue.copy(alpha = 0.3f))
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Default.FitnessCenter,
+                                    contentDescription = null,
+                                    tint = ElectricBlue,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "No workout logs yet",
+                            color = TextWhite,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Complete a workout session to see your progress, volume, and history here.",
+                            color = TextMuted,
+                            fontSize = 13.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            lineHeight = 18.sp
+                        )
                     }
                 }
             }
@@ -292,6 +465,21 @@ fun WorkoutHistoryScreen(
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
+
+                                // Delete action button on card
+                                IconButton(
+                                    onClick = { logToDelete = log },
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .testTag("delete_log_${log.id}")
+                                ) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Delete",
+                                        tint = Color(0xFFFF453A),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
                         }
 
@@ -330,11 +518,12 @@ fun WorkoutHistoryScreen(
                     }
                 }
             }
+                    }
+                }
             }
         }
     }
-
-    }
+}
 }
 
 private fun formatLogDate(log: WorkoutLogEntity): String {

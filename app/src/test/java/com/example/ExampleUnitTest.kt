@@ -114,4 +114,28 @@ class ExampleUnitTest {
         // Monday's workout is preserved as 1-day active streak while Tuesday is still pending
         assertEquals(1, streak)
     }
+
+    @Test
+    fun testUserProfileEntityDefaultAndCompletion() {
+        val incompleteProfile = com.example.data.entity.UserProfileEntity(
+            userId = "test_user_1",
+            displayName = "Alex",
+            isProfileComplete = false
+        )
+        assertFalse(incompleteProfile.isProfileComplete)
+        assertEquals("kg", incompleteProfile.preferredWeightUnit)
+
+        val completeProfile = incompleteProfile.copy(
+            isProfileComplete = true,
+            gender = "Male",
+            age = 27,
+            height = 180.0,
+            bodyweight = 80.0,
+            primaryGoal = "Strength & Hypertrophy",
+            experienceLevel = "Intermediate (1-3 yrs)"
+        )
+        assertTrue(completeProfile.isProfileComplete)
+        assertEquals("Male", completeProfile.gender)
+        assertEquals(27, completeProfile.age)
+    }
 }

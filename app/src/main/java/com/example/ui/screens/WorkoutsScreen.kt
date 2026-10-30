@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,6 +22,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.delay
 import android.app.Activity
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
@@ -30,6 +33,10 @@ import com.example.ui.components.ManageWeeklySplitSheet
 import com.example.ui.components.ProfileAuthSheet
 import com.example.ui.components.ReorderRoutinesBottomSheet
 import com.example.ui.components.WeeklyScheduleSection
+import com.example.ui.components.ShareRoutineQrSheet
+import com.example.ui.components.ImportRoutineDialog
+import com.example.util.QrCodeGenerator
+import com.example.util.SharedRoutinePayload
 import com.example.ui.theme.*
 import com.example.ui.viewmodel.WorkoutViewModel
 
@@ -37,7 +44,10 @@ import com.example.ui.viewmodel.WorkoutViewModel
 @Composable
 fun WorkoutsScreen(
     viewModel: WorkoutViewModel,
-    onStartRoutine: (RoutineEntity) -> Unit
+    onStartRoutine: (RoutineEntity) -> Unit,
+    onResumeWorkout: ((com.example.data.entity.ActiveWorkoutStateEntity) -> Unit)? = null,
+    initialImportData: String? = null,
+    onClearDeepLink: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val routines by viewModel.routines.collectAsState()
@@ -47,17 +57,58 @@ fun WorkoutsScreen(
     val activeStreak by viewModel.activeStreak.collectAsState()
     val authState by viewModel.authState.collectAsState()
     val syncStatus by viewModel.syncStatus.collectAsState()
+    val activeWorkoutState by viewModel.activeWorkoutState.collectAsState()
 
     var showProfileSheet by remember { mutableStateOf(false) }
     var showManageSplitSheet by remember { mutableStateOf(false) }
     var showReorderSheet by remember { mutableStateOf(false) }
     var showCreateRoutineScreen by remember { mutableStateOf(false) }
+    var editingRoutine by remember { mutableStateOf<RoutineEntity?>(null) }
+
+    var routineToShare by remember { mutableStateOf<RoutineEntity?>(null) }
+    var showImportRoutineDialog by remember { mutableStateOf(false) }
+    var pendingImportPayload by remember { mutableStateOf<SharedRoutinePayload?>(null) }
+
+    LaunchedEffect(initialImportData) {
+        if (!initialImportData.isNullOrBlank()) {
+            val parsed = QrCodeGenerator.parseInput(initialImportData)
+            if (parsed != null) {
+                pendingImportPayload = parsed
+                showImportRoutineDialog = true
+            }
+        }
+    }
+
+    // Auto-dismiss cloud backup / profile bottom sheet immediately upon successful authentication
+    LaunchedEffect(authState.user, authState.isGuest) {
+        if (authState.user != null && !authState.isGuest) {
+            showProfileSheet = false
+        }
+    }
+
+    // Ensure the bottom sheet remains visible to display the inline red error chip on auth error
+    LaunchedEffect(authState.errorMessage) {
+        if (!authState.errorMessage.isNullOrBlank()) {
+            showProfileSheet = true
+        }
+    }
 
     if (showCreateRoutineScreen) {
         CreateRoutineScreen(
             viewModel = viewModel,
-            onDismiss = { showCreateRoutineScreen = false },
-            onRoutineCreated = { showCreateRoutineScreen = false }
+            editingRoutine = editingRoutine,
+            onDismiss = {
+                showCreateRoutineScreen = false
+                editingRoutine = null
+            },
+            onRoutineCreated = {
+                showCreateRoutineScreen = false
+                editingRoutine = null
+            },
+            onRoutineSaved = {
+                showCreateRoutineScreen = false
+                editingRoutine = null
+            }
         )
         return
     }
@@ -70,12 +121,176 @@ fun WorkoutsScreen(
         contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        // 0. Sticky Active Workout Restoration Banner (Crash / Cold Start Immunity)
+        if (activeWorkoutState != null) {
+            item(key = "active_workout_resume_banner") {
+                val state = activeWorkoutState!!
+                fun calcBannerSeconds(): Long {
+                    if (state.startTimestamp <= 0L) return 0L
+                    val now = System.currentTimeMillis()
+                    val rawElapsed = (now - state.startTimestamp) / 1000L
+                    val ongoingPaused = if (state.isPaused && state.pauseTimestamp != null && state.pauseTimestamp > 0L) {
+                        (now - state.pauseTimestamp) / 1000L
+                    } else {
+                        0L
+                    }
+                    val effectivePaused = state.totalPausedSeconds + ongoingPaused
+                    return maxOf(0L, rawElapsed - effectivePaused)
+                }
+
+                var bannerSeconds by remember(state.startTimestamp, state.isPaused, state.pauseTimestamp, state.totalPausedSeconds) {
+                    mutableStateOf(calcBannerSeconds())
+                }
+                LaunchedEffect(state.startTimestamp, state.isPaused, state.pauseTimestamp, state.totalPausedSeconds) {
+                    bannerSeconds = calcBannerSeconds()
+                    while (true) {
+                        delay(1000)
+                        bannerSeconds = calcBannerSeconds()
+                    }
+                }
+
+                val hrs = bannerSeconds / 3600
+                val mins = (bannerSeconds % 3600) / 60
+                val secs = bannerSeconds % 60
+                val timeStr = if (hrs > 0) {
+                    String.format("%02d:%02d:%02d", hrs, mins, secs)
+                } else {
+                    String.format("%02d:%02d", mins, secs)
+                }
+
+                var showDiscardDialog by remember { mutableStateOf(false) }
+
+                Surface(
+                    color = Color(0xFF0F141C),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.5.dp, ElectricBlue),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("active_workout_resume_card")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(ElectricBlueAlpha),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("⚡", fontSize = 18.sp)
+                            }
+                            Column {
+                                Text(
+                                    text = "Workout in Progress",
+                                    color = TextWhite,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "${state.routineName} • $timeStr",
+                                    color = ElectricBlueLight,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(
+                                onClick = { showDiscardDialog = true },
+                                modifier = Modifier.testTag("discard_restored_workout_button")
+                            ) {
+                                Text("Discard", color = TextMuted, fontSize = 12.sp)
+                            }
+
+                            Button(
+                                onClick = {
+                                    if (onResumeWorkout != null) {
+                                        onResumeWorkout(state)
+                                    } else {
+                                        onStartRoutine(
+                                            RoutineEntity(
+                                                id = state.routineId ?: "",
+                                                title = state.routineName,
+                                                description = "",
+                                                exercisesSummary = "",
+                                                sortOrder = 0
+                                            )
+                                        )
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                                modifier = Modifier.testTag("resume_workout_button")
+                            ) {
+                                Text("Resume", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
+
+                if (showDiscardDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showDiscardDialog = false },
+                        containerColor = Color(0xFF121212),
+                        modifier = Modifier.border(1.dp, Color(0xFF262626), RoundedCornerShape(16.dp)),
+                        shape = RoundedCornerShape(16.dp),
+                        title = {
+                            Text("Discard Workout?", color = TextWhite, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        },
+                        text = {
+                            Text("Discard active session? All progress will be removed.", color = TextMuted, fontSize = 14.sp)
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    showDiscardDialog = false
+                                    viewModel.clearActiveWorkoutState(context)
+                                    Toast.makeText(context, "Workout discarded", Toast.LENGTH_SHORT).show()
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3B30)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Discard", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showDiscardDialog = false }) {
+                                Text("Cancel", color = ElectricBlueLight)
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
         // 1. Personalized User Profile Header
         item {
             val user = authState.user
             val isGuest = authState.isGuest || user == null
-            val displayName = user?.displayName?.split(" ")?.firstOrNull() ?: "Athlete"
-            val userGreeting = "Hey, $displayName 👋"
+            val firstName = user?.displayName?.split(" ")?.firstOrNull()?.takeIf { it.isNotBlank() } ?: "Athlete"
+            val userEmail = user?.email ?: ""
+
+            val titleText = if (isGuest) "Hey, Athlete 💪" else "Hey, $firstName 💪"
+            val subtitleText = if (isGuest) {
+                "• Guest Mode • Tap to backup"
+            } else {
+                if (userEmail.isNotBlank()) "• Synced with $userEmail • All data saved" else "• Synced with Cloud • All data saved"
+            }
 
             Row(
                 modifier = Modifier
@@ -89,65 +304,32 @@ fun WorkoutsScreen(
                         .weight(1f)
                         .clickable { showProfileSheet = true }
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            text = userGreeting,
-                            color = TextWhite,
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        val indicatorColor = if (!isGuest) {
-                            when (syncStatus) {
-                                is SyncStatus.Syncing -> ElectricBlueLight
-                                is SyncStatus.Success -> StreakGreen
-                                is SyncStatus.Error -> WarmupAmber
-                                is SyncStatus.Idle -> StreakGreen
-                            }
-                        } else {
-                            TextDark
-                        }
-                        val syncSubtext = if (!isGuest) {
-                            when (syncStatus) {
-                                is SyncStatus.Syncing -> "Syncing with Cloud..."
-                                is SyncStatus.Success -> "Synced with Cloud"
-                                is SyncStatus.Error -> "Sync Pending"
-                                is SyncStatus.Idle -> "Cloud Backup Active"
-                            }
-                        } else {
-                            "Guest Mode • Tap to backup"
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .size(6.dp)
-                                .background(indicatorColor, CircleShape)
-                        )
-                        Text(
-                            text = syncSubtext,
-                            color = TextMuted,
-                            fontSize = 12.sp
-                        )
-                    }
+                    Text(
+                        text = titleText,
+                        color = TextWhite,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = subtitleText,
+                        color = if (isGuest) TextMuted else ElectricBlueLight,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
                 }
 
-                // Profile Avatar / Sign-In Button
+                // Profile Avatar (Signed-in) / Sign-In Pill Button (Guest)
                 if (!isGuest && user != null) {
                     val photoUrl = user.photoUrl?.toString()
-                    val initial = displayName.firstOrNull()?.uppercaseChar()?.toString() ?: "A"
+                    val initial = firstName.firstOrNull()?.uppercaseChar()?.toString() ?: "A"
+
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(42.dp)
                             .clip(CircleShape)
                             .background(ElectricBlueAlpha, CircleShape)
-                            .border(1.5.dp, ElectricBlue, CircleShape)
+                            .border(2.dp, ElectricBlue, CircleShape)
                             .clickable { showProfileSheet = true }
                             .testTag("profile_avatar"),
                         contentAlignment = Alignment.Center
@@ -169,17 +351,17 @@ fun WorkoutsScreen(
                         }
                     }
                 } else {
-                    // Guest Pill: "Sign In" with Google G
+                    // Guest Mode: "Sign In" Pill Button
                     Surface(
                         color = DarkCardBg,
                         shape = RoundedCornerShape(20.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, ElectricBlue.copy(alpha = 0.5f)),
+                        border = BorderStroke(1.dp, ElectricBlue),
                         modifier = Modifier
                             .clickable { showProfileSheet = true }
-                            .testTag("profile_avatar")
+                            .testTag("sign_in_pill_button")
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
@@ -192,7 +374,7 @@ fun WorkoutsScreen(
                             Text(
                                 text = "Sign In",
                                 color = TextWhite,
-                                fontSize = 12.sp,
+                                fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
@@ -296,7 +478,25 @@ fun WorkoutsScreen(
                     }
 
                     Button(
-                        onClick = { showCreateRoutineScreen = true },
+                        onClick = { showImportRoutineDialog = true },
+                        modifier = Modifier
+                            .height(34.dp)
+                            .testTag("scan_qr_button"),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(containerColor = DarkCardBg, contentColor = ElectricBlue),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, ElectricBlue.copy(alpha = 0.6f)),
+                        shape = RoundedCornerShape(18.dp)
+                    ) {
+                        Icon(Icons.Default.QrCodeScanner, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Scan QR", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+
+                    Button(
+                        onClick = {
+                            editingRoutine = null
+                            showCreateRoutineScreen = true
+                        },
                         modifier = Modifier
                             .height(34.dp)
                             .testTag("new_routine_button"),
@@ -312,8 +512,64 @@ fun WorkoutsScreen(
             }
         }
 
-        // 6. Routine Cards List
-        items(routines, key = { it.id }) { routine ->
+        // 6. Routine Cards List or Empty State
+        if (routines.isEmpty()) {
+            item {
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(1.dp, DarkBorder, RoundedCornerShape(16.dp))
+                        .testTag("empty_routines_container"),
+                    color = DarkCardBg
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 40.dp, horizontal = 24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(CircleShape)
+                                .background(DarkCardSurface)
+                                .border(1.dp, DarkBorder, CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.FitnessCenter,
+                                contentDescription = null,
+                                tint = ElectricBlue,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Text(
+                            text = "No routines yet",
+                            color = TextWhite,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Text(
+                            text = "Create your first routine or scan a friend's QR code to begin.",
+                            color = TextMuted,
+                            fontSize = 13.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
+            }
+        } else {
+            items(routines, key = { it.id }) { routine ->
             var showMenu by remember { mutableStateOf(false) }
 
             Surface(
@@ -365,6 +621,25 @@ fun WorkoutsScreen(
                                 modifier = Modifier.background(DarkCardSurface).border(1.dp, DarkBorder)
                             ) {
                                 DropdownMenuItem(
+                                    text = { Text("Edit Routine", color = TextWhite) },
+                                    leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = ElectricBlue) },
+                                    onClick = {
+                                        showMenu = false
+                                        editingRoutine = routine
+                                        showCreateRoutineScreen = true
+                                    },
+                                    modifier = Modifier.testTag("edit_routine_menu_${routine.id}")
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("Share Routine", color = TextWhite) },
+                                    leadingIcon = { Icon(Icons.Default.QrCode, contentDescription = null, tint = ElectricBlue) },
+                                    onClick = {
+                                        showMenu = false
+                                        routineToShare = routine
+                                    },
+                                    modifier = Modifier.testTag("share_routine_${routine.id}")
+                                )
+                                DropdownMenuItem(
                                     text = { Text("Duplicate Routine", color = TextWhite) },
                                     leadingIcon = { Icon(Icons.Default.ContentCopy, contentDescription = null, tint = ElectricBlue) },
                                     onClick = {
@@ -404,13 +679,29 @@ fun WorkoutsScreen(
                     // Action Buttons
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
+                        IconButton(
+                            onClick = { routineToShare = routine },
+                            modifier = Modifier
+                                .size(42.dp)
+                                .border(1.dp, DarkBorderHover, RoundedCornerShape(10.dp))
+                                .background(DarkCardSurface, RoundedCornerShape(10.dp))
+                                .testTag("share_routine_btn_${routine.id}")
+                        ) {
+                            Icon(Icons.Default.QrCode, contentDescription = "Share", tint = ElectricBlue, modifier = Modifier.size(18.dp))
+                        }
+
                         OutlinedButton(
                             onClick = {
-                                Toast.makeText(context, "Editing ${routine.title}", Toast.LENGTH_SHORT).show()
+                                editingRoutine = routine
+                                showCreateRoutineScreen = true
                             },
-                            modifier = Modifier.weight(1f).height(42.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp)
+                                .testTag("edit_routine_btn_${routine.id}"),
                             shape = RoundedCornerShape(10.dp),
                             border = androidx.compose.foundation.BorderStroke(1.dp, DarkBorderHover),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = TextWhite)
@@ -436,6 +727,7 @@ fun WorkoutsScreen(
             }
         }
     }
+    }
 
     // Sheet: Manage Weekly Split
     if (showManageSplitSheet) {
@@ -456,7 +748,8 @@ fun WorkoutsScreen(
             routines = routines,
             onDismiss = { showReorderSheet = false },
             onSaveOrder = { newOrderList ->
-                viewModel.updateRoutinesOrder(newOrderList)
+                val orderedPairs = newOrderList.mapIndexed { index, routine -> routine.id to index }
+                viewModel.saveRoutineOrder(orderedPairs)
                 Toast.makeText(context, "Routine order updated", Toast.LENGTH_SHORT).show()
             }
         )
@@ -473,8 +766,12 @@ fun WorkoutsScreen(
             routinesCount = routines.size,
             historyCount = workoutLogs.size,
             onSignInWithGoogle = {
-                (context as? Activity)?.let { activity ->
+                val activity = context.findActivity() ?: (context as? Activity)
+                if (activity != null) {
                     viewModel.signInWithGoogle(activity)
+                } else {
+                    android.util.Log.e("AuthSyncDebug", "WorkoutsScreen: context is not an Activity, cannot launch CredentialManager")
+                    Toast.makeText(context, "Unable to find parent Activity for Sign-In", Toast.LENGTH_SHORT).show()
                 }
             },
             onContinueAsGuest = {
@@ -490,4 +787,36 @@ fun WorkoutsScreen(
             onDismiss = { showProfileSheet = false }
         )
     }
+
+    // Sheet: Share Routine QR Code
+    if (routineToShare != null) {
+        val allDbExercises by viewModel.exercises.collectAsState()
+        ShareRoutineQrSheet(
+            routine = routineToShare!!,
+            allDbExercises = allDbExercises,
+            onDismiss = { routineToShare = null }
+        )
+    }
+
+    // Dialog: Import Routine (CameraX Scanner / Paste Link)
+    if (showImportRoutineDialog) {
+        ImportRoutineDialog(
+            viewModel = viewModel,
+            initialPayload = pendingImportPayload,
+            onDismiss = {
+                showImportRoutineDialog = false
+                pendingImportPayload = null
+                onClearDeepLink()
+            }
+        )
+    }
+}
+
+private fun android.content.Context.findActivity(): Activity? {
+    var ctx = this
+    while (ctx is android.content.ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }

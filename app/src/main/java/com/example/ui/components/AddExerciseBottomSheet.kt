@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -52,12 +54,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
+import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,6 +70,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -76,8 +81,14 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.auth.AuthManager
+import com.example.data.AppDatabase
 import com.example.data.entity.ExerciseEntity
+import com.example.data.sync.CloudSyncManager
 import com.example.ui.theme.ElectricBlue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /**
@@ -87,7 +98,9 @@ import java.util.UUID
 fun AddExerciseHeader(
     totalCount: Int,
     onCreateExerciseClick: () -> Unit,
-    onCloseClick: () -> Unit
+    onCloseClick: () -> Unit,
+    title: String = "Add Exercises",
+    subtitle: String = "$totalCount movements available"
 ) {
     Row(
         modifier = Modifier
@@ -98,13 +111,13 @@ fun AddExerciseHeader(
     ) {
         Column {
             Text(
-                text = "Add Exercises",
+                text = title,
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "$totalCount movements available",
+                text = subtitle,
                 color = Color(0xFF8E8E93),
                 fontSize = 12.sp
             )
@@ -248,7 +261,9 @@ fun CreateCustomExerciseModalBottomSheet(
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 8.dp)
-                .padding(bottom = 28.dp)
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(bottom = 20.dp)
         ) {
             // Header
             Row(
@@ -512,8 +527,10 @@ fun CreateCustomExerciseModalBottomSheet(
                             val barWeight = barWeightText.toDoubleOrNull() ?: if (isBarbell) 20.0 else 0.0
                             val category = mapMuscleToCategory(selectedMuscle)
                             val newExercise = ExerciseEntity(
-                                id = UUID.randomUUID(),
+                                id = UUID.randomUUID().toString(),
                                 name = name.trim(),
+                                muscleGroup = selectedMuscle,
+                                equipment = selectedEquipment,
                                 category = category,
                                 equipmentType = selectedEquipment,
                                 notes = "",
@@ -522,7 +539,9 @@ fun CreateCustomExerciseModalBottomSheet(
                                 secondaryMuscles = emptyList(),
                                 equipmentCategory = selectedEquipment,
                                 trackingType = if (selectedEquipment.equals("Bodyweight", true)) "BODYWEIGHT_REP" else "WEIGHT_AND_REPS",
-                                defaultRestSeconds = 90
+                                defaultRestSeconds = 90,
+                                barbellWeightKg = barWeight,
+                                customBarWeight = barWeight.toFloat()
                             )
                             onCreateExercise(newExercise, barWeight)
                         }
@@ -566,22 +585,44 @@ fun AddExerciseBottomSheet(
     allExercises: List<ExerciseEntity>,
     alreadySelectedIds: Set<UUID> = emptySet(),
     exerciseToReplaceId: UUID? = null,
+    initialMuscleFilter: String? = null,
+    isSwapMode: Boolean = false,
     onDismiss: () -> Unit,
     onSelectExercise: ((ExerciseEntity) -> Unit)? = null,
     onConfirmSelection: ((List<ExerciseEntity>) -> Unit)? = null,
     onCreateAndAddCustomExercise: ((ExerciseEntity, Double) -> Unit)? = null
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val haptic = LocalHapticFeedback.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    val initialCategory = remember(initialMuscleFilter) {
+        if (!initialMuscleFilter.isNullOrBlank()) {
+            val m = initialMuscleFilter.trim().lowercase()
+            when {
+                m.contains("chest") -> "Chest"
+                m.contains("back") || m.contains("lat") -> "Back"
+                m.contains("shoulder") || m.contains("delt") || m.contains("trap") -> "Shoulders"
+                m.contains("bicep") -> "Biceps"
+                m.contains("tricep") -> "Triceps"
+                m.contains("leg") || m.contains("quad") || m.contains("hamstring") || m.contains("glute") || m.contains("calf") || m.contains("calves") -> "Legs"
+                m.contains("abs") || m.contains("core") || m.contains("abdom") -> "Abs & Core"
+                else -> "All"
+            }
+        } else {
+            "All"
+        }
+    }
+
     var searchQuery by remember { mutableStateOf("") }
-    var selectedCategoryFilter by remember { mutableStateOf("All") }
+    var selectedCategoryFilter by remember { mutableStateOf(initialCategory) }
     var selectedEquipmentFilter by remember { mutableStateOf("All Equipment") }
     val selectedIds = remember { mutableStateListOf<UUID>() }
 
     var showCreateCustomSheet by remember { mutableStateOf(false) }
 
-    val categoryChips = listOf("All", "Chest", "Back", "Shoulders", "Biceps", "Triceps", "Legs", "Abs & Core")
+    val categoryChips = listOf("All", "Chest", "Back", "Shoulders", "Biceps", "Triceps", "Legs", "Abs & Core", "Forearms", "Traps")
     val equipmentChips = listOf("All Equipment", "Barbell", "Dumbbell", "Cable", "Machine", "Smith Machine", "Bodyweight")
 
     val filteredExercises = remember(allExercises, searchQuery, selectedCategoryFilter, selectedEquipmentFilter) {
@@ -589,26 +630,104 @@ fun AddExerciseBottomSheet(
             val matchesQuery = searchQuery.isBlank() ||
                     exercise.name.contains(searchQuery, ignoreCase = true) ||
                     exercise.primaryMuscle.contains(searchQuery, ignoreCase = true) ||
+                    exercise.muscleGroup.contains(searchQuery, ignoreCase = true) ||
                     exercise.category.contains(searchQuery, ignoreCase = true) ||
                     exercise.equipmentType.contains(searchQuery, ignoreCase = true)
 
             val matchesCategory = when (selectedCategoryFilter) {
                 "All" -> true
-                "Biceps", "Triceps" -> exercise.category.equals("Arms", ignoreCase = true) &&
-                        (exercise.primaryMuscle.contains(selectedCategoryFilter, ignoreCase = true) ||
-                                exercise.name.contains(selectedCategoryFilter, ignoreCase = true))
-                "Abs & Core" -> exercise.category.contains("Core", true) ||
+                "Biceps" -> {
+                    exercise.primaryMuscle.contains("Bicep", ignoreCase = true) ||
+                    exercise.muscleGroup.contains("Bicep", ignoreCase = true) ||
+                    exercise.category.contains("Bicep", ignoreCase = true) ||
+                    exercise.name.contains("Bicep", ignoreCase = true) ||
+                    ((exercise.primaryMuscle.contains("Arm", ignoreCase = true) ||
+                      exercise.muscleGroup.contains("Arm", ignoreCase = true) ||
+                      exercise.category.contains("Arm", ignoreCase = true)) &&
+                     (exercise.name.contains("curl", ignoreCase = true) ||
+                      exercise.name.contains("bicep", ignoreCase = true) ||
+                      exercise.name.contains("chin-up", ignoreCase = true) ||
+                      exercise.name.contains("chin up", ignoreCase = true) ||
+                      exercise.name.contains("zottman", ignoreCase = true)))
+                }
+                "Triceps" -> {
+                    exercise.primaryMuscle.contains("Tricep", ignoreCase = true) ||
+                    exercise.muscleGroup.contains("Tricep", ignoreCase = true) ||
+                    exercise.category.contains("Tricep", ignoreCase = true) ||
+                    exercise.name.contains("Tricep", ignoreCase = true) ||
+                    ((exercise.primaryMuscle.contains("Arm", ignoreCase = true) ||
+                      exercise.muscleGroup.contains("Arm", ignoreCase = true) ||
+                      exercise.category.contains("Arm", ignoreCase = true)) &&
+                     (exercise.name.contains("tricep", ignoreCase = true) ||
+                      exercise.name.contains("extension", ignoreCase = true) ||
+                      exercise.name.contains("pushdown", ignoreCase = true) ||
+                      exercise.name.contains("dip", ignoreCase = true) ||
+                      exercise.name.contains("skull", ignoreCase = true) ||
+                      exercise.name.contains("jm press", ignoreCase = true) ||
+                      exercise.name.contains("tate press", ignoreCase = true) ||
+                      exercise.name.contains("close-grip", ignoreCase = true) ||
+                      exercise.name.contains("close grip", ignoreCase = true))) ||
+                    exercise.name.contains("diamond push-up", ignoreCase = true) ||
+                    exercise.name.contains("diamond pushup", ignoreCase = true)
+                }
+                "Chest" -> exercise.primaryMuscle.contains("Chest", ignoreCase = true) ||
+                        exercise.muscleGroup.contains("Chest", ignoreCase = true) ||
+                        exercise.category.contains("Chest", ignoreCase = true)
+                "Back" -> exercise.primaryMuscle.contains("Back", ignoreCase = true) ||
+                        exercise.primaryMuscle.contains("Lat", ignoreCase = true) ||
+                        exercise.primaryMuscle.contains("Trap", ignoreCase = true) ||
+                        exercise.muscleGroup.contains("Back", ignoreCase = true) ||
+                        exercise.category.contains("Back", ignoreCase = true)
+                "Shoulders" -> exercise.primaryMuscle.contains("Shoulder", ignoreCase = true) ||
+                        exercise.primaryMuscle.contains("Deltoid", ignoreCase = true) ||
+                        exercise.muscleGroup.contains("Shoulder", ignoreCase = true) ||
+                        exercise.category.contains("Shoulder", ignoreCase = true)
+                "Legs" -> exercise.primaryMuscle.contains("Leg", ignoreCase = true) ||
+                        exercise.primaryMuscle.contains("Quad", ignoreCase = true) ||
+                        exercise.primaryMuscle.contains("Hamstring", ignoreCase = true) ||
+                        exercise.primaryMuscle.contains("Calf", ignoreCase = true) ||
+                        exercise.primaryMuscle.contains("Calves", ignoreCase = true) ||
+                        exercise.primaryMuscle.contains("Glute", ignoreCase = true) ||
+                        exercise.muscleGroup.contains("Leg", ignoreCase = true) ||
+                        exercise.category.contains("Leg", ignoreCase = true)
+                "Abs & Core", "Abs", "Core" -> exercise.category.contains("Core", true) ||
                         exercise.category.contains("Abs", true) ||
                         exercise.primaryMuscle.contains("Abdominal", true) ||
-                        exercise.primaryMuscle.contains("Core", true)
-                else -> exercise.category.equals(selectedCategoryFilter, ignoreCase = true) ||
-                        exercise.primaryMuscle.contains(selectedCategoryFilter, ignoreCase = true)
+                        exercise.primaryMuscle.contains("Core", true) ||
+                        exercise.primaryMuscle.contains("Abs", true) ||
+                        exercise.muscleGroup.contains("Core", true) ||
+                        exercise.muscleGroup.contains("Abs", true)
+                "Forearms" -> exercise.primaryMuscle.contains("Forearm", ignoreCase = true) ||
+                        exercise.muscleGroup.contains("Forearm", ignoreCase = true) ||
+                        exercise.category.contains("Forearm", ignoreCase = true) ||
+                        exercise.secondaryMuscles.any { it.contains("Forearm", ignoreCase = true) || it.contains("Grip", ignoreCase = true) } ||
+                        exercise.name.contains("Wrist Curl", ignoreCase = true) ||
+                        exercise.name.contains("Dead Hang", ignoreCase = true) ||
+                        exercise.name.contains("Plate Pinch", ignoreCase = true) ||
+                        exercise.name.contains("Wrist Roller", ignoreCase = true)
+                "Traps" -> exercise.primaryMuscle.contains("Trap", ignoreCase = true) ||
+                        exercise.muscleGroup.contains("Trap", ignoreCase = true) ||
+                        exercise.category.contains("Trap", ignoreCase = true) ||
+                        exercise.secondaryMuscles.any { it.contains("Trap", ignoreCase = true) } ||
+                        exercise.name.contains("Shrug", ignoreCase = true)
+                else -> exercise.category.contains(selectedCategoryFilter, ignoreCase = true) ||
+                        exercise.primaryMuscle.contains(selectedCategoryFilter, ignoreCase = true) ||
+                        exercise.muscleGroup.contains(selectedCategoryFilter, ignoreCase = true)
             }
 
             val matchesEquipment = when (selectedEquipmentFilter) {
                 "All Equipment" -> true
+                "Smith Machine" -> exercise.equipmentType.contains("Smith", ignoreCase = true) ||
+                        exercise.equipmentCategory.contains("Smith", ignoreCase = true) ||
+                        exercise.equipment.contains("Smith", ignoreCase = true) ||
+                        exercise.name.contains("Smith", ignoreCase = true)
+                "Bodyweight" -> exercise.equipmentType.contains("Bodyweight", ignoreCase = true) ||
+                        exercise.equipmentCategory.contains("Bodyweight", ignoreCase = true) ||
+                        exercise.equipment.contains("Bodyweight", ignoreCase = true)
                 else -> exercise.equipmentType.equals(selectedEquipmentFilter, ignoreCase = true) ||
-                        exercise.equipmentCategory.equals(selectedEquipmentFilter, ignoreCase = true)
+                        exercise.equipmentCategory.equals(selectedEquipmentFilter, ignoreCase = true) ||
+                        exercise.equipment.equals(selectedEquipmentFilter, ignoreCase = true) ||
+                        exercise.equipmentType.contains(selectedEquipmentFilter, ignoreCase = true)
             }
 
             matchesQuery && matchesCategory && matchesEquipment
@@ -630,10 +749,13 @@ fun AddExerciseBottomSheet(
         }
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
+            val swapActive = isSwapMode || exerciseToReplaceId != null
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(bottom = if (selectedIds.isNotEmpty() && exerciseToReplaceId == null) 80.dp else 16.dp)
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .padding(bottom = if (selectedIds.isNotEmpty() && !swapActive) 80.dp else 16.dp)
             ) {
                 // Header with + New button
                 AddExerciseHeader(
@@ -641,7 +763,9 @@ fun AddExerciseBottomSheet(
                     onCreateExerciseClick = {
                         showCreateCustomSheet = true
                     },
-                    onCloseClick = onDismiss
+                    onCloseClick = onDismiss,
+                    title = if (swapActive) "⇄ Swap Exercise" else "Add Exercises",
+                    subtitle = if (swapActive) "Select an alternate movement for this workout session" else "${allExercises.size} movements available"
                 )
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -812,7 +936,13 @@ fun AddExerciseBottomSheet(
                             )
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = "No exercises found for \"$searchQuery\"",
+                                text = if (searchQuery.isNotBlank()) {
+                                    "No exercises found for \"$searchQuery\""
+                                } else if (selectedCategoryFilter != "All") {
+                                    "No exercises found for $selectedCategoryFilter"
+                                } else {
+                                    "No exercises found"
+                                },
                                 color = Color(0xFF8E8E93),
                                 fontSize = 14.sp
                             )
@@ -847,7 +977,7 @@ fun AddExerciseBottomSheet(
                                     .clip(RoundedCornerShape(14.dp))
                                     .clickable(enabled = !isAlreadyIn) {
                                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        if (exerciseToReplaceId != null) {
+                                        if (swapActive) {
                                             onSelectExercise?.invoke(exercise)
                                             onDismiss()
                                         } else {
@@ -859,7 +989,7 @@ fun AddExerciseBottomSheet(
                                         }
                                     }
                                     .testTag("exercise_picker_item_${exercise.id}"),
-                                color = if (isChecked) Color(0xFF181C26) else Color(0xFF141417),
+                                color = if (isChecked) Color(0xFF1877F2).copy(alpha = 0.12f) else Color(0xFF141417),
                                 shape = RoundedCornerShape(14.dp),
                                 border = BorderStroke(
                                     width = 1.dp,
@@ -914,7 +1044,7 @@ fun AddExerciseBottomSheet(
                                         }
                                     }
 
-                                    // Selection checkbox or "Added" state
+                                    // Selection checkbox, "Swap" action pill, or "Added" state
                                     if (isAlreadyIn) {
                                         Text(
                                             text = "Added",
@@ -922,7 +1052,21 @@ fun AddExerciseBottomSheet(
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold
                                         )
-                                    } else if (exerciseToReplaceId == null) {
+                                    } else if (swapActive) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Color(0xFF1877F2).copy(alpha = 0.15f),
+                                            border = BorderStroke(1.dp, Color(0xFF1877F2).copy(alpha = 0.5f))
+                                        ) {
+                                            Text(
+                                                text = "Swap",
+                                                color = Color(0xFF60A5FA),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                            )
+                                        }
+                                    } else {
                                         Box(
                                             modifier = Modifier
                                                 .size(24.dp)
@@ -955,10 +1099,12 @@ fun AddExerciseBottomSheet(
             }
 
             // Floating Confirm Button (appears when count > 0)
-            if (selectedIds.isNotEmpty() && exerciseToReplaceId == null) {
+            if (selectedIds.isNotEmpty() && !swapActive) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .imePadding()
                         .padding(16.dp)
                 ) {
                     Button(
@@ -999,10 +1145,71 @@ fun AddExerciseBottomSheet(
     if (showCreateCustomSheet) {
         CreateCustomExerciseModalBottomSheet(
             onDismiss = { showCreateCustomSheet = false },
-            onCreateExercise = { createdExercise, barWeight ->
+            onCreateExercise = { candidateExercise, barWeight ->
                 showCreateCustomSheet = false
-                onCreateAndAddCustomExercise?.invoke(createdExercise, barWeight)
-                onDismiss()
+                coroutineScope.launch {
+                    runCatching {
+                        val db = AppDatabase.getDatabase(context)
+                        val authManager = AuthManager.getInstance(context)
+                        val syncManager = CloudSyncManager.getInstance(context)
+                        val uid = authManager.currentUser?.uid ?: "guest"
+
+                        val trimmedName = candidateExercise.name.trim()
+                        val existing = withContext(Dispatchers.IO) {
+                            db.exerciseDao().getExerciseByName(trimmedName)
+                        }
+
+                        val finalExercise = if (existing != null) {
+                            existing
+                        } else {
+                            val exerciseToInsert = candidateExercise.copy(
+                                id = candidateExercise.id.ifBlank { UUID.randomUUID().toString() },
+                                name = trimmedName,
+                                muscleGroup = candidateExercise.primaryMuscle,
+                                equipment = candidateExercise.equipmentType,
+                                category = mapMuscleToCategory(candidateExercise.primaryMuscle),
+                                equipmentType = candidateExercise.equipmentType,
+                                primaryMuscle = candidateExercise.primaryMuscle,
+                                equipmentCategory = candidateExercise.equipmentType,
+                                isCustom = true,
+                                userId = uid,
+                                barbellWeightKg = barWeight,
+                                customBarWeight = barWeight.toFloat()
+                            )
+                            withContext(Dispatchers.IO) {
+                                db.exerciseDao().insertCustomExercise(exerciseToInsert)
+                            }
+                            exerciseToInsert
+                        }
+
+                        if (uid != "guest" && uid.isNotBlank()) {
+                            withContext(Dispatchers.IO) {
+                                syncManager.pushCustomExercise(uid, finalExercise)
+                            }
+                        }
+
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "Custom exercise created and added!", Toast.LENGTH_SHORT).show()
+                            if (onCreateAndAddCustomExercise != null) {
+                                onCreateAndAddCustomExercise.invoke(finalExercise, barWeight)
+                            } else {
+                                onSelectExercise?.invoke(finalExercise) ?: onConfirmSelection?.invoke(listOf(finalExercise))
+                            }
+                            onDismiss()
+                        }
+                    }.onFailure { err ->
+                        android.util.Log.e("AddExerciseBottomSheet", "Error creating custom exercise: ${err.message}", err)
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "Custom exercise created and added!", Toast.LENGTH_SHORT).show()
+                            if (onCreateAndAddCustomExercise != null) {
+                                onCreateAndAddCustomExercise.invoke(candidateExercise, barWeight)
+                            } else {
+                                onSelectExercise?.invoke(candidateExercise) ?: onConfirmSelection?.invoke(listOf(candidateExercise))
+                            }
+                            onDismiss()
+                        }
+                    }
+                }
             }
         )
     }

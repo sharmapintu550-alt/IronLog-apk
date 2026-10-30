@@ -43,8 +43,10 @@ fun WorkoutShareSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
                 .padding(horizontal = 20.dp)
-                .padding(bottom = 36.dp)
+                .padding(bottom = 28.dp)
         ) {
             // Header
             Row(

@@ -3,10 +3,12 @@ package com.example.ui.screens
 import android.widget.Toast
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import com.example.ui.components.CustomExerciseDialog
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -46,24 +48,54 @@ fun ExercisesScreen(
     var selectedExerciseForHistory by remember { mutableStateOf<ExerciseEntity?>(null) }
     var exerciseForAddToRoutine by remember { mutableStateOf<ExerciseEntity?>(null) }
 
-    var newExName by remember { mutableStateOf("") }
-    var newExMuscle by remember { mutableStateOf("Chest") }
-    var newExEquip by remember { mutableStateOf("Barbell") }
-
-    val categories = listOf("All", "Custom", "Chest", "Back", "Legs", "Shoulders", "Arms", "Core")
+    val categories = listOf("All", "Custom", "Chest", "Back", "Legs", "Shoulders", "Arms", "Abs", "Forearms", "Traps")
 
     val filteredExercises = remember(allExercises, searchQuery, selectedCategory) {
-        allExercises.filter { ex ->
-            val matchesCategory = when (selectedCategory) {
-                "All" -> true
-                "Custom" -> ex.isCustom
-                else -> ex.muscleGroup.equals(selectedCategory, ignoreCase = true)
+        allExercises
+            .filter { ex ->
+                val matchesCategory = when (selectedCategory) {
+                    "All" -> true
+                    "Custom" -> ex.isCustom
+                    "Abs", "Core", "Abs & Core" ->
+                        ex.muscleGroup.contains("Abs", ignoreCase = true) ||
+                        ex.muscleGroup.contains("Core", ignoreCase = true) ||
+                        ex.primaryMuscle.contains("Abs", ignoreCase = true) ||
+                        ex.primaryMuscle.contains("Core", ignoreCase = true) ||
+                        ex.category.contains("Abs", ignoreCase = true) ||
+                        ex.category.contains("Core", ignoreCase = true)
+                    "Forearms" ->
+                        ex.muscleGroup.contains("Forearm", ignoreCase = true) ||
+                        ex.primaryMuscle.contains("Forearm", ignoreCase = true) ||
+                        ex.category.contains("Forearm", ignoreCase = true) ||
+                        ex.secondaryMuscles.any { it.contains("Forearm", ignoreCase = true) || it.contains("Grip", ignoreCase = true) } ||
+                        ex.name.contains("Wrist Curl", ignoreCase = true) ||
+                        ex.name.contains("Dead Hang", ignoreCase = true) ||
+                        ex.name.contains("Plate Pinch", ignoreCase = true) ||
+                        ex.name.contains("Wrist Roller", ignoreCase = true)
+                    "Traps" ->
+                        ex.muscleGroup.contains("Trap", ignoreCase = true) ||
+                        ex.primaryMuscle.contains("Trap", ignoreCase = true) ||
+                        ex.category.contains("Trap", ignoreCase = true) ||
+                        ex.secondaryMuscles.any { it.contains("Trap", ignoreCase = true) } ||
+                        ex.name.contains("Shrug", ignoreCase = true)
+                    "Arms" ->
+                        ex.muscleGroup.contains("Arm", ignoreCase = true) ||
+                        ex.primaryMuscle.contains("Arm", ignoreCase = true) ||
+                        ex.muscleGroup.contains("Bicep", ignoreCase = true) ||
+                        ex.muscleGroup.contains("Tricep", ignoreCase = true) ||
+                        ex.muscleGroup.contains("Forearm", ignoreCase = true) ||
+                        ex.category.contains("Arm", ignoreCase = true)
+                    else -> ex.muscleGroup.contains(selectedCategory, ignoreCase = true) ||
+                            ex.primaryMuscle.contains(selectedCategory, ignoreCase = true) ||
+                            ex.category.contains(selectedCategory, ignoreCase = true)
+                }
+                val matchesSearch = searchQuery.isBlank() ||
+                        ex.name.contains(searchQuery, ignoreCase = true) ||
+                        ex.muscleGroup.contains(searchQuery, ignoreCase = true) ||
+                        ex.primaryMuscle.contains(searchQuery, ignoreCase = true)
+                matchesCategory && matchesSearch
             }
-            val matchesSearch = searchQuery.isBlank() ||
-                    ex.name.contains(searchQuery, ignoreCase = true) ||
-                    ex.muscleGroup.contains(searchQuery, ignoreCase = true)
-            matchesCategory && matchesSearch
-        }
+            .sortedWith(compareByDescending<ExerciseEntity> { it.isCustom }.thenBy { it.name.lowercase() })
     }
 
     AnimatedContent(
@@ -98,50 +130,54 @@ fun ExercisesScreen(
                 onBack = { selectedExerciseForHistory = null }
             )
         } else {
-            LazyColumn(
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(AmoledBlack)
-                    .padding(horizontal = 16.dp),
-                contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Header
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = "Exercises Library",
-                                color = TextWhite,
-                                fontSize = 28.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            Text(
-                                text = "${allExercises.size} exercises with personal records",
-                                color = TextMuted,
-                                fontSize = 13.sp
-                            )
-                        }
-
-                        Button(
-                            onClick = { showAddDialog = true },
-                            modifier = Modifier
-                                .height(36.dp)
-                                .testTag("add_custom_exercise_button"),
-                            colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
-                            shape = RoundedCornerShape(18.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    contentPadding = PaddingValues(top = 16.dp, bottom = 120.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    // Header
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("New", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Column {
+                                Text(
+                                    text = "Exercises Library",
+                                    color = TextWhite,
+                                    fontSize = 28.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Text(
+                                    text = "${allExercises.size} exercises with personal records",
+                                    color = TextMuted,
+                                    fontSize = 13.sp
+                                )
+                            }
+
+                            Button(
+                                onClick = { showAddDialog = true },
+                                modifier = Modifier
+                                    .height(36.dp)
+                                    .testTag("add_custom_exercise_button"),
+                                colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
+                                shape = RoundedCornerShape(18.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 0.dp)
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("+ Create Exercise", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
-                }
 
                 // Search Bar
                 item {
@@ -263,8 +299,24 @@ fun ExercisesScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
+                                        if (ex.isCustom) {
+                                            Surface(
+                                                color = ElectricBlueAlpha,
+                                                shape = RoundedCornerShape(4.dp),
+                                                border = BorderStroke(0.5.dp, ElectricBlue)
+                                            ) {
+                                                Text(
+                                                    text = "CUSTOM",
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp),
+                                                    color = ElectricBlueLight,
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    letterSpacing = 0.5.sp
+                                                )
+                                            }
+                                        }
                                         Surface(
-                                            color = ElectricBlueAlpha,
+                                            color = DarkCardSurface,
                                             shape = RoundedCornerShape(6.dp)
                                         ) {
                                             Text(
@@ -275,8 +327,14 @@ fun ExercisesScreen(
                                                 fontWeight = FontWeight.SemiBold
                                             )
                                         }
+                                        val equipmentDetail = when {
+                                            ex.barbellWeightKg != 20.0 && (ex.equipment.equals("Barbell", true) || ex.equipment.equals("Smith Machine", true)) ->
+                                                "• ${ex.equipment} (${if (ex.barbellWeightKg % 1.0 == 0.0) ex.barbellWeightKg.toInt() else ex.barbellWeightKg}kg)"
+                                            ex.isDualPulley -> "• ${ex.equipment} (Dual Pulley)"
+                                            else -> "• ${ex.equipment}"
+                                        }
                                         Text(
-                                            text = "• ${ex.equipment}",
+                                            text = equipmentDetail,
                                             color = TextDark,
                                             fontSize = 11.sp
                                         )
@@ -363,12 +421,25 @@ fun ExercisesScreen(
                                     }
                                 }
                             }
-                        }
                     }
                 }
             }
         }
+
+        ExtendedFloatingActionButton(
+            onClick = { showAddDialog = true },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 96.dp, end = 16.dp)
+                .testTag("create_custom_exercise_fab"),
+            containerColor = ElectricBlue,
+            contentColor = TextWhite,
+            icon = { Icon(Icons.Default.Add, contentDescription = "Create Exercise") },
+            text = { Text("Create Exercise", fontWeight = FontWeight.Bold, fontSize = 13.sp) }
+        )
     }
+}
+}
 
     // Add to Routine Dialog (triggered from 3-dot menu)
     exerciseForAddToRoutine?.let { exToAssign ->
@@ -471,73 +542,14 @@ fun ExercisesScreen(
         )
     }
 
-    // Add Custom Exercise Dialog
+    // Custom Exercise Creator Dialog / Bottom Sheet
     if (showAddDialog) {
-        AlertDialog(
-            onDismissRequest = { showAddDialog = false },
-            containerColor = DarkCardBg,
-            title = { Text("Add Custom Exercise", color = TextWhite, fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(
-                        value = newExName,
-                        onValueChange = { newExName = it },
-                        label = { Text("Exercise Name") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("new_ex_name_input"),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = ElectricBlue,
-                            unfocusedBorderColor = DarkBorder,
-                            focusedTextColor = TextWhite,
-                            unfocusedTextColor = TextWhite
-                        )
-                    )
-                    OutlinedTextField(
-                        value = newExMuscle,
-                        onValueChange = { newExMuscle = it },
-                        label = { Text("Muscle Group (e.g. Chest, Legs)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = ElectricBlue,
-                            unfocusedBorderColor = DarkBorder,
-                            focusedTextColor = TextWhite,
-                            unfocusedTextColor = TextWhite
-                        )
-                    )
-                    OutlinedTextField(
-                        value = newExEquip,
-                        onValueChange = { newExEquip = it },
-                        label = { Text("Equipment (e.g. Barbell, Dumbbell)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = ElectricBlue,
-                            unfocusedBorderColor = DarkBorder,
-                            focusedTextColor = TextWhite,
-                            unfocusedTextColor = TextWhite
-                        )
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (newExName.isNotBlank()) {
-                            viewModel.addCustomExercise(newExName, newExMuscle, newExEquip)
-                            newExName = ""
-                            showAddDialog = false
-                            Toast.makeText(context, "Exercise added!", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = ElectricBlue),
-                    modifier = Modifier.testTag("save_custom_exercise_button")
-                ) {
-                    Text("Add")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAddDialog = false }) {
-                    Text("Cancel", color = TextMuted)
+        CustomExerciseDialog(
+            onDismiss = { showAddDialog = false },
+            onSave = { newExercise ->
+                viewModel.saveCustomExercise(newExercise) {
+                    showAddDialog = false
+                    Toast.makeText(context, "${newExercise.name} created and saved!", Toast.LENGTH_SHORT).show()
                 }
             }
         )
